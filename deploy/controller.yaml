@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sandbox
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sandbox-controller
+  namespace: sandbox
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sandbox-controller
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec", "pods/log", "secrets", "configmaps"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sandbox-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sandbox-controller
+subjects:
+  - kind: ServiceAccount
+    name: sandbox-controller
+    namespace: sandbox
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-controller
+  namespace: sandbox
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sandbox-controller
+  template:
+    metadata:
+      labels:
+        app: sandbox-controller
+    spec:
+      serviceAccountName: sandbox-controller
+      containers:
+        - name: controller
+          image: pod-sandbox-controller:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SANDBOX_NAMESPACE
+              value: sandbox
+            - name: EXECUTOR_IMAGE
+              value: pod-sandbox-executor:latest
+            - name: POOL_SIZE
+              value: "20"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox-controller
+  namespace: sandbox
+spec:
+  selector:
+    app: sandbox-controller
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: sandbox-controller
+  namespace: sandbox
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sandbox-controller
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
